@@ -228,12 +228,12 @@ Complete a current assessment in the active Job Workspace first, select a questi
 
 ### Application agent (review-only)
 
-The application agent chains the `Agent_skills` steps for a batch of jobs: fit check → evidence inventory → tailored CV → cover letter → claim check → your review. It stops at a drafted pack. It cannot approve its own work, submit an application, or contact anyone; only you can record those steps in the tracker.
+Use the **Applications** tab in the UI (it works in a phone or tablet browser), or the CLI below. The application agent chains the `Agent_skills` steps for a batch of jobs: fit check → evidence inventory → tailored CV → cover letter → claim check → your review. It stops at a drafted pack. It cannot approve its own work, submit an application, or contact anyone; only you can record those steps in the tracker.
 
 ```bash
 # Fit-check every job and draft packs for the ones worth applying to.
 uv run --no-sync tau-job-application prepare my_cv.pdf jobs/*.txt --location Zurich --exclude "Some Co" --min-verdict "Potential Fit"
-# Draft with a model following Agent_skills/*/SKILL.md (needs OPENAI_API_KEY and MODEL_NAME).
+# Draft with a model following Agent_skills/*/SKILL.md (needs MODEL_NAME plus ANTHROPIC_API_KEY or OPENAI_API_KEY).
 uv run --no-sync tau-job-application prepare my_cv.pdf jobs/*.txt --llm
 
 uv run --no-sync tau-job-application tracker              # all roles and their status

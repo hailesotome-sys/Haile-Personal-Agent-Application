@@ -31,6 +31,8 @@ from tau_job_application.sources import enrich_github_profile, fetch_greenhouse_
 from tau_job_application.storage import LocalStore
 from tau_job_application.workspaces import PROFILE_FIELDS, WorkspaceStore
 from tau_job_application.workspace_ui import choose_scope, draft_key, show_chat, show_direction
+from tau_job_application.applications_ui import show_applications
+from tau_job_application.tracker import ApplicationTracker
 
 
 def _project_root() -> Path:
@@ -45,6 +47,7 @@ STORE = LocalStore(ROOT / ".job_assistant" / "assistant.sqlite")
 MONITOR = JobMonitor(ROOT / ".job_assistant" / "assistant.sqlite")
 REQUIREMENT_MEMORY = RequirementMemory(ROOT / ".job_assistant" / "assistant.sqlite")
 WORKSPACES = WorkspaceStore(ROOT / ".job_assistant" / "assistant.sqlite")
+TRACKER = ApplicationTracker(ROOT / ".job_assistant" / "assistant.sqlite")
 
 
 STYLES = """
@@ -102,8 +105,8 @@ def main() -> None:
     st.markdown(STYLES, unsafe_allow_html=True)
     workspace_id, thread_id = choose_scope(WORKSPACES)
     _workspace_hero(WORKSPACES.thread(workspace_id, thread_id))
-    overview, brief, cv_studio, projects, interview, direction, opportunities, conversation = st.tabs([
-        "Overview", "Job brief", "CV studio", "Proof projects", "Interview lab", "Career track", "Explore", "Coach"])
+    overview, applications, brief, cv_studio, projects, interview, direction, opportunities, conversation = st.tabs([
+        "Overview", "Applications", "Job brief", "CV studio", "Proof projects", "Interview lab", "Career track", "Explore", "Coach"])
     with overview:
         _job_workspace_dashboard(workspace_id, thread_id)
     with brief:
@@ -120,6 +123,9 @@ def main() -> None:
         _opportunities(workspace_id, thread_id)
     with conversation:
         show_chat(WORKSPACES, workspace_id, thread_id)
+    with applications:
+        show_applications(TRACKER, ROOT / ".job_assistant" / "packs", ROOT / "Agent_skills",
+                          WORKSPACES.shared_profile().get("cv_text", ""))
 
 
 def _workspace_hero(thread: dict) -> None:

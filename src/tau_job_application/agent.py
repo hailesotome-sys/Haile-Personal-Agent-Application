@@ -41,10 +41,13 @@ def build_completion(*, provider: ModelProvider | None = None, model: str | None
     if not selected_model:
         raise RuntimeError("Set MODEL_NAME before drafting with a model")
     if provider is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("Set OPENAI_API_KEY before drafting with a model")
-        provider = OpenAICompatibleProvider(OpenAICompatibleConfig(api_key=api_key))
+        if anthropic_key := os.environ.get("ANTHROPIC_API_KEY"):
+            from tau_ai import AnthropicConfig, AnthropicProvider
+            provider = AnthropicProvider(AnthropicConfig(api_key=anthropic_key))
+        elif openai_key := os.environ.get("OPENAI_API_KEY"):
+            provider = OpenAICompatibleProvider(OpenAICompatibleConfig(api_key=openai_key))
+        else:
+            raise RuntimeError("Set ANTHROPIC_API_KEY or OPENAI_API_KEY before drafting with a model")
 
     def complete(system: str, prompt: str) -> str:
         harness = AgentHarness(AgentHarnessConfig(provider=provider, model=selected_model, system=system, max_turns=1))

@@ -153,6 +153,20 @@ class ApplicationTracker:
             self._log(connection, application_id, actor, current.status, to_status, details or {})
         return self.get(application_id)
 
+    def save_reviewed_text(self, application_id: int, text: str) -> TrackedApplication:
+        """Store the user's edited pack. Editing an approved pack sends it back for re-approval."""
+        current = self.get(application_id)
+        if current.status not in {"drafted", "approved"}:
+            raise TransitionError(f"Cannot edit the pack of an application in status '{current.status}'")
+        previous = Path(current.pack_path).read_text(encoding="utf-8") if current.pack_path and Path(current.pack_path).exists() else current.pack_markdown
+        if current.pack_path:
+            Path(current.pack_path).write_text(text, encoding="utf-8")
+        with self._connect() as connection:
+            connection.execute("UPDATE applications SET pack_markdown = ?, updated_at = ? WHERE id = ?", (text, self._now(), application_id))
+        if current.status == "approved" and text != previous:
+            return self.transition(application_id, "drafted", actor="user", details={"reason": "edited after approval"})
+        return self.get(application_id)
+
     def _accept_reviewed_pack(self, current: TrackedApplication) -> None:
         """Approval reads the pack the user edited; every [GAP] placeholder must be resolved."""
         if current.pack_path and Path(current.pack_path).exists():
