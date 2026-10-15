@@ -91,3 +91,6 @@ def test_review_shows_score_fit_check_changes_and_pdf(tmp_path, monkeypatch) -> 
     assert app.get("image")
     assert any("Moved up" in markdown.value for markdown in app.markdown)
     assert any("Hard filters" in markdown.value for markdown in app.markdown)
+    studio = next(box for box in app.selectbox if box.label == "CV adapted for")
+    assert studio.value.startswith("Application #")
+    assert sum("Download CV (PDF)" in element.proto.label for element in app.get("download_button")) == 2

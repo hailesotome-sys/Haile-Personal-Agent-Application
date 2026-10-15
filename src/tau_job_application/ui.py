@@ -31,7 +31,7 @@ from tau_job_application.sources import enrich_github_profile, fetch_greenhouse_
 from tau_job_application.storage import LocalStore
 from tau_job_application.workspaces import PROFILE_FIELDS, WorkspaceStore
 from tau_job_application.workspace_ui import choose_scope, draft_key, show_chat, show_direction
-from tau_job_application.applications_ui import show_applications
+from tau_job_application.applications_ui import show_applications, show_cv_pdfs
 from tau_job_application.tracker import ApplicationTracker
 
 
@@ -109,6 +109,9 @@ def main() -> None:
         "Overview", "Applications", "Job brief", "CV studio", "Proof projects", "Interview lab", "Career track", "Explore", "Coach"])
     with overview:
         _job_workspace_dashboard(workspace_id, thread_id)
+    with applications:  # before CV studio, so a fresh run's PDFs show there at once
+        show_applications(TRACKER, ROOT / ".job_assistant" / "packs", ROOT / "Agent_skills",
+                          WORKSPACES.shared_profile().get("cv_text", ""))
     with brief:
         _quickstart(workspace_id, thread_id)
     with cv_studio:
@@ -123,9 +126,6 @@ def main() -> None:
         _opportunities(workspace_id, thread_id)
     with conversation:
         show_chat(WORKSPACES, workspace_id, thread_id)
-    with applications:
-        show_applications(TRACKER, ROOT / ".job_assistant" / "packs", ROOT / "Agent_skills",
-                          WORKSPACES.shared_profile().get("cv_text", ""))
 
 
 def _workspace_hero(thread: dict) -> None:
@@ -413,7 +413,9 @@ def _cv_studio(workspace_id: str, thread_id: str) -> None:
     thread = WORKSPACES.thread(workspace_id, thread_id)
     result = thread["analysis"] if not thread["stale"] else None
     st.subheader("CV studio")
-    st.caption("Refine your narrative for this role without inventing employers, skills, dates, or outcomes. This workspace currently provides guidance—not a finished CV editor.")
+    st.caption("Refine your narrative for this role without inventing employers, skills, dates, or outcomes.")
+    with st.container(border=True):
+        show_cv_pdfs(TRACKER, result)
     if thread["stale"]:
         st.warning("Refresh the Job brief first. CV guidance is held back while its underlying evidence is stale.")
         return

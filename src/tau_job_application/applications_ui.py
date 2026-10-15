@@ -231,16 +231,54 @@ def _apply_score(analysis: JobAnalysis) -> None:
     st.caption("A decision aid built from the checks below, not a prediction of being hired.")
 
 
-def _cv_pdf(row, pack_text: str, analysis: JobAnalysis | None) -> None:
+def _cv_pdf(row, pack_text: str, analysis: JobAnalysis | None, key: str = "apps_pdf") -> None:
     document = _cv_document(pack_text, analysis)
     if document is None:
         st.info("The CV section of this pack could not be laid out as a PDF. Download the pack as text instead.")
         return
+    _pdf_preview(document, row.company, f"{key}_{row.id}", "Built from the CV section of the pack, including your edits. One A4 page.")
+
+
+def _pdf_preview(document: ResumeDocument, company: str, key: str, caption: str) -> None:
     pdf = render_resume_pdf(document)
-    st.download_button("Download CV (PDF)", pdf, file_name=f"CV {document.name} - {row.company}.pdf",
-                       mime="application/pdf", type="primary", key=f"apps_pdf_{row.id}")
-    st.caption("Built from the CV section of the pack, including your edits. One A4 page.")
+    st.download_button("Download CV (PDF)", pdf, file_name=f"CV {document.name} - {company}.pdf",
+                       mime="application/pdf", type="primary", key=key)
+    st.caption(caption)
     st.image(_preview(pdf), width="stretch")
+
+
+def show_cv_pdfs(tracker: ApplicationTracker, workspace_result=None) -> None:
+    """CV studio: the adapted CV as a PDF, for this job workspace or any prepared application."""
+    from tau_job_application.resume_document import parse_resume, tailor_resume_document
+
+    options: dict[str, object] = {}
+    if workspace_result is not None and workspace_result.candidate.raw_cv:
+        options[f"This workspace: {workspace_result.job.title} at {workspace_result.job.company}"] = workspace_result
+    for row in tracker.list():
+        if row.pack_path or row.pack_markdown:
+            options[f"Application #{row.id}: {row.job_title} at {row.company}"] = row
+    st.markdown("<div class='section-kicker'>Adapted CV as PDF</div>", unsafe_allow_html=True)
+    if not options:
+        st.info("Run the agent in the Applications tab, or analyze a job in Job brief, to get an adapted CV as a PDF.")
+        return
+    choice = st.selectbox("CV adapted for", list(options), key="studio_pdf_choice")
+    source = options[choice]
+    if hasattr(source, "pack_path"):
+        analysis = _analysis(source)
+        with st.expander("What changed for this role"):
+            _changes(analysis)
+        _cv_pdf(source, _pack_text(source), analysis, key="studio_pdf")
+        return
+    try:
+        document = parse_resume(source.candidate.raw_cv)
+    except ValueError:
+        st.info("Your CV could not be laid out as a PDF.")
+        return
+    skills = [item.skill for item in source.job.requirements if item.importance != "uncertain"]
+    tailored, changes = tailor_resume_document(document, source.job.title, source.job.company, skills)
+    with st.expander("What changed for this role"):
+        _changes(JobAnalysis.model_construct(resume_changes=changes))
+    _pdf_preview(tailored, source.job.company, "studio_pdf_workspace", "Your CV's own wording, reordered for this role. One A4 page.")
 
 
 def _cv_document(pack_text: str, analysis: JobAnalysis | None) -> ResumeDocument | None:
