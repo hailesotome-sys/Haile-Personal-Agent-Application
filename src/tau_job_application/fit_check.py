@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from tau_job_application.models import JobPosting, MatchResult, RequirementStatus
 
 Verdict = Literal["Strong Fit", "Potential Fit", "Stretch", "Not a Fit"]
+MIN_SCOREABLE_FOR_STRONG = 3
 VERDICT_ORDER: tuple[Verdict, ...] = ("Not a Fit", "Stretch", "Potential Fit", "Strong Fit")
 
 
@@ -54,8 +55,12 @@ def assess_fit(job: JobPosting, match: MatchResult, preferences: CandidatePrefer
     filters = _hard_filters(job, preferences)
     failed = [item for item in filters if item.result == "fail"]
 
+    scoreable = [item for item in match.requirements if item.status != RequirementStatus.UNKNOWN]
     if failed:
         verdict: Verdict = "Not a Fit"
+    elif len(scoreable) < MIN_SCOREABLE_FOR_STRONG and match.required_score >= 0.6:
+        # Two matched languages are not proof of fit: too little was extracted to be confident.
+        verdict = "Potential Fit"
     elif match.required_score >= 0.85 and match.score >= 75:
         verdict = "Strong Fit"
     elif match.required_score >= 0.6:
@@ -109,6 +114,9 @@ def _summary(job: JobPosting, verdict: Verdict, match: MatchResult, failed: list
     text = f"{verdict} for {job.title} at {job.company}: confirmed evidence covers {coverage}% of required skills (match {match.score}/100)."
     if missing_required:
         text += " Missing required evidence: " + ", ".join(missing_required) + "."
+    scoreable = [item for item in match.requirements if item.status != RequirementStatus.UNKNOWN]
+    if len(scoreable) < MIN_SCOREABLE_FOR_STRONG:
+        text += f" Only {len(scoreable)} requirement(s) could be scored, so read the posting yourself before relying on this."
     return text
 
 

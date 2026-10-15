@@ -41,6 +41,8 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--min-verdict", choices=["Strong Fit", "Potential Fit", "Stretch"], default="Stretch")
     prepare.add_argument("--llm", action="store_true", help="Draft with a model using Agent_skills (needs OPENAI_API_KEY and MODEL_NAME)")
     prepare.add_argument("--out", type=Path, default=None, help="Folder for application packs")
+    prepare.add_argument("--confirm-skill", action="append", default=[], dest="confirm_skills",
+                         help="A skill you can evidence that your CV does not list in a skills line; repeat for several")
 
     tracker = commands.add_parser("tracker", help="List tracked applications")
     tracker.add_argument("--status", default=None)
@@ -115,7 +117,7 @@ def _prepare(args: argparse.Namespace, tracker) -> str:
     agent = ApplicationAgent(tracker, export_dir=args.out or PROJECT_ROOT / ".job_assistant" / "packs",
                              preferences=preferences, drafter=drafter)
     jobs = [JobInput(text=load_document(path)) for path in args.jobs]
-    return render_report(agent.run(load_document(args.candidate), jobs))
+    return render_report(agent.run(load_document(args.candidate), jobs, confirmed_skills=args.confirm_skills))
 
 
 async def _run_agent(candidate_path: Path, job_path: Path) -> None:

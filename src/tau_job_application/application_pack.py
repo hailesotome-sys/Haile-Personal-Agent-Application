@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from tau_job_application.fit_check import FitAssessment
 from tau_job_application.models import CandidateProfile, JobPosting, MatchResult, RequirementStatus
-from tau_job_application.parsing import KNOWN_SKILLS
+from tau_job_application.parsing import _find_skills, _slug
 
 DocumentKind = Literal["resume", "cover_letter"]
 SKILL_DIRECTORIES = {"resume": "resume_tailor", "cover_letter": "cover_letter_writer", "fit_check": "fit_check"}
@@ -103,14 +103,18 @@ class TemplateDrafter:
         strong = [row.employer_need for row in context.inventory if row.strength == "Strong"]
         other = [skill for skill in candidate.skills if skill not in strong]
         lines = [f"# {candidate.name}", ""]
-        if candidate.headline:
+        if candidate.headline and candidate.headline != candidate.name:
             lines += [candidate.headline, ""]
         lines += ["## Target role", f"{job.title}, {job.company}", "", "## Skills"]
         lines.append("Most relevant: " + (", ".join(strong) if strong else "[GAP: confirm role-relevant skills]"))
         if other:
             lines.append("Other: " + ", ".join(other))
         lines += ["", "## Experience and projects"]
-        lines.append(candidate.experience_summary or "[GAP: paste your experience bullets; nothing is invented here]")
+        bullets = _existing_bullets(candidate.raw_cv or "", strong)
+        if bullets:
+            lines += [f"- {bullet}" for bullet in bullets]
+        else:
+            lines.append(candidate.experience_summary or "[GAP: paste your experience bullets; nothing is invented here]")
         lines += ["", "<!-- Reorder existing bullets so the skills above come first. Add no new employers, metrics or technologies. -->"]
         return "\n".join(lines)
 
@@ -184,6 +188,9 @@ def _draft_prompt(kind: DocumentKind, context: DraftContext) -> str:
 def check_claims(documents: dict[DocumentKind, str], candidate: CandidateProfile, job: JobPosting) -> ClaimCheck:
     """Flag numbers and skills a draft states that the CV does not support."""
     cv = candidate.raw_cv or ""
+    # Alias-aware, so "Contrôleur de gestion" in the CV supports "Management control" in a draft.
+    supported = set(_find_skills(cv)) | {skill for skill in candidate.skills
+                                         if any(item.confirmed and item.id == f"candidate-skill-{_slug(skill)}" for item in candidate.evidence)}
     allowed_numbers = set(_numbers(cv)) | set(_numbers(job.description or ""))
     issues: list[ClaimIssue] = []
     for kind, text in documents.items():
@@ -191,11 +198,9 @@ def check_claims(documents: dict[DocumentKind, str], candidate: CandidateProfile
         for number in sorted(set(_numbers(body)) - allowed_numbers):
             issues.append(ClaimIssue(kind="unsupported_number", text=number, document=kind,
                                      detail="This number does not appear in the CV or the job posting."))
-        for skill in KNOWN_SKILLS:
-            pattern = rf"(?<!\w){re.escape(skill)}(?!\w)"
-            if re.search(pattern, body, re.I) and not re.search(pattern, cv, re.I):
-                issues.append(ClaimIssue(kind="unsupported_skill", text=skill, document=kind,
-                                         detail="This skill is not in the CV; keep it only if the sentence does not claim it."))
+        for skill in sorted(set(_find_skills(body)) - supported):
+            issues.append(ClaimIssue(kind="unsupported_skill", text=skill, document=kind,
+                                     detail="This skill is not in the CV; keep it only if the sentence does not claim it."))
         gaps = re.findall(r"\[GAP[^\]]*\]", text)
         for gap in gaps:
             issues.append(ClaimIssue(kind="open_gap", text=gap.strip("[]"), document=kind, detail="Fill in or remove before approving."))
@@ -233,6 +238,15 @@ def render_pack_markdown(pack: ApplicationPack, fit: FitAssessment) -> str:
     lines += ["", "## Tailored CV draft", "", pack.resume_draft, "", "## Cover letter draft", "", pack.cover_letter_draft, "",
               f"> Drafted by: {pack.drafted_by}. Review every line; nothing is sent or submitted by the agent."]
     return "\n".join(lines)
+
+
+def _existing_bullets(cv: str, relevant_skills: list[str], limit: int = 8) -> list[str]:
+    """The CV's own bullet lines, most role-relevant first. Nothing is rewritten or added."""
+    bullets = [line.strip(" •-*\t") for line in cv.splitlines() if line.strip().startswith(("•", "-", "*"))]
+    bullets = [bullet for bullet in bullets if len(bullet) > 25 and ":" not in bullet[:25]]
+    wanted = set(relevant_skills)
+    ranked = sorted(bullets, key=lambda bullet: -len(wanted & set(_find_skills(bullet))))
+    return ranked[:limit]
 
 
 def _numbers(text: str) -> list[str]:

@@ -16,7 +16,7 @@ from pypdf import PdfReader
 
 from tau_job_application.models import CandidateProfile, EvidenceItem, JobPosting
 from tau_job_application.requirement_memory import RequirementMemory
-from tau_job_application.requirements import extract_requirements
+from tau_job_application.requirements import CAPABILITIES, _hits, extract_requirements
 
 KNOWN_SKILLS = (
     "Python", "SQL", "FastAPI", "Docker", "Kubernetes", "AWS", "GCP", "Azure",
@@ -27,7 +27,16 @@ KNOWN_SKILLS = (
     "CUDA", "OpenCL", "ROCm", "HIP", "FPGA", "Verilog", "VHDL", "SystemVerilog",
     "RTOS", "FreeRTOS", "Embedded Linux", "PCB design", "PCB layout", "KiCad",
     "Altium", "Microcontrollers", "DSP", "MATLAB", "Simulink", "GPU programming",
+    # Finance, controlling and consulting.
+    "Excel", "VBA", "Power Query", "Power BI", "SAP", "Microsoft Office", "Bloomberg",
+    "FP&A", "Management control", "Corporate finance", "Financial analysis", "Financial reporting",
+    "Budgeting", "Forecasting", "Accounting", "Consolidation", "Valuation", "M&A", "Due diligence",
+    "Risk management", "Asset management", "Audit", "ACCA", "CIMA",
+    "English", "French", "Spanish", "German",
 )
+# CV lines that list skills in the candidate's own words count as self-declared evidence.
+SKILL_LIST_FIELDS = {"skills", "compétences", "competences", "langues", "languages",
+                     "certifications", "outils", "tools", "logiciels"}
 
 
 def load_document(path: Path) -> str:
@@ -67,26 +76,35 @@ def infer_profile_links(text: str) -> dict[str, str]:
     return result
 
 
-def parse_candidate_text(text: str, *, links: dict[str, str] | None = None) -> CandidateProfile:
-    """Create a candidate profile without claiming that keyword mentions prove skill."""
+def parse_candidate_text(text: str, *, links: dict[str, str] | None = None,
+                         confirmed_skills: list[str] | None = None) -> CandidateProfile:
+    """Create a candidate profile without claiming that keyword mentions prove skill.
+
+    Skills count as confirmed when the CV lists them itself (a Skills/Compétences/Langues
+    line) or when the user confirms them; anything else found in the text stays unconfirmed.
+    """
     fields = _parse_fields(text)
     inferred_links = infer_profile_links(text)
     inferred_links.update({key: value for key, value in (links or {}).items() if value})
     name = fields.get("name") or _guess_name(text) or "Candidate (please confirm)"
     explicit_skills = _split_list(fields.get("skills", ""))
-    skills = _dedupe(explicit_skills or _find_skills(text))
-    skill_quote = f"Skills: {fields['skills']}" if fields.get("skills") else "Skills inferred from CV text; confirm each one."
-    confirmed = bool(explicit_skills)
-    evidence = [
-        EvidenceItem(
-            id=f"candidate-skill-{_slug(skill)}",
-            source="candidate",
-            quote=skill_quote,
-            location="Skills" if explicit_skills else "CV keyword extraction",
-            confirmed=confirmed,
-        )
-        for skill in skills
-    ]
+    listed = {skill: f"{key.capitalize()}: {fields[key]}" for key in SKILL_LIST_FIELDS - {"skills"} if fields.get(key)
+              for skill in _find_skills(fields[key])}
+    user_confirmed = {skill.casefold(): skill for skill in confirmed_skills or []}
+    detected = _find_skills(text)
+    skills = _dedupe(explicit_skills + list(listed) + ([] if explicit_skills else detected) + list(user_confirmed.values()))
+    evidence = []
+    for skill in skills:
+        if skill in explicit_skills:
+            quote, location, confirmed = f"Skills: {fields['skills']}", "Skills", True
+        elif skill in listed:
+            quote, location, confirmed = listed[skill], "Skills list", True
+        elif skill.casefold() in user_confirmed:
+            quote, location, confirmed = f"{skill}: confirmed by the candidate", "Candidate confirmation", True
+        else:
+            quote, location, confirmed = "Skills inferred from CV text; confirm each one.", "CV keyword extraction", False
+        evidence.append(EvidenceItem(id=f"candidate-skill-{_slug(skill)}", source="candidate", quote=quote,
+                                     location=location, confirmed=confirmed))
     evidence.append(EvidenceItem(
         id="candidate-cv-source",
         source="candidate",
@@ -143,7 +161,7 @@ def _parse_fields(text: str) -> dict[str, str]:
             continue
         key, value = line.split(":", 1)
         if value.strip():
-            fields[key.strip().casefold()] = value.strip()
+            fields[key.strip().strip("•-*\t ").casefold()] = value.strip()
     return fields
 
 
@@ -152,7 +170,9 @@ def _split_list(value: str) -> list[str]:
 
 
 def _find_skills(text: str) -> list[str]:
-    return [skill for skill in KNOWN_SKILLS if re.search(rf"(?<!\w){re.escape(skill)}(?!\w)", text, re.I)]
+    """Canonical skills named in the text, including known aliases such as French terms."""
+    catalog = {**{skill: skill for skill in KNOWN_SKILLS}, **CAPABILITIES}
+    return _dedupe([catalog[phrase] for phrase in catalog if _hits(phrase, text)])
 
 
 def _guess_name(text: str) -> str | None:

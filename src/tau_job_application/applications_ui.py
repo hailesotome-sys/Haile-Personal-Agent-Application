@@ -57,6 +57,9 @@ def _prepare_section(tracker: ApplicationTracker, export_dir: Path, skills_dir: 
     with st.expander("Prepare new applications", expanded=not tracker.list()):
         cv_text = st.text_area("Your CV", value=default_cv, height=180, key="apps_cv",
                                help="Defaults to the CV saved in your shared profile.")
+        vouched = st.text_input("Skills you can back up that your CV doesn't list in a skills line (comma separated)",
+                                key="apps_confirmed",
+                                help="For example Management control, Financial reporting. Only these and your CV's own skills lines earn match credit.")
         job_texts = st.text_area("Job descriptions", height=200, key="apps_jobs",
                                  help="Paste one or more descriptions, separated by a line with only ---")
         job_urls = st.text_area("Or job page URLs (one per line)", height=80, key="apps_urls")
@@ -95,7 +98,7 @@ def _prepare_section(tracker: ApplicationTracker, export_dir: Path, skills_dir: 
             drafter = LLMDrafter(build_completion(), skills_dir)
         agent = ApplicationAgent(tracker, export_dir=export_dir, preferences=preferences, drafter=drafter)
         with st.spinner(f"Preparing {len(jobs)} job(s)…"):
-            report = agent.run(cv_text, jobs)
+            report = agent.run(cv_text, jobs, confirmed_skills=_csv(vouched))
         counts = report.counts()
         st.success("Done: " + ", ".join(f"{count} {outcome}" for outcome, count in counts.items()) + ". Nothing was submitted.")
         st.dataframe([{

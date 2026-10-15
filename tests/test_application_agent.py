@@ -148,3 +148,55 @@ def test_tau_completion_adapter_returns_model_text() -> None:
     complete = build_completion(provider=provider, model="fake")
     assert complete("system rules", "write it") == "Draft text"
     assert provider.calls[0][1] == "system rules" and provider.calls[0][3] == []
+
+
+FRENCH_CV = """Haile Example
+EXPÉRIENCES PROFESSIONNELLES
+Contrôleur de gestion (CDD) Juin 2026 – Août 2026
+• Production des reportings financiers mensuels; clôture comptable.
+INFORMATIONS ADDITIONNELLES
+• Langues : Français (natif), Anglais (natif), Espagnol (courant)
+• Compétences : Pack Office / Python, Power Query/Bi, VBA, SAP BO
+"""
+FINANCE_JOB = """Title: Stage Contrôle de gestion bancaire
+Company: BNP Paribas
+Location: Paris
+Profile: business school, specialising in management control and/or corporate finance. You must have at least 3 months of experience in management control. Intermediate English. Excellent at Excel.
+We want people who excel in a challenging environment.
+"""
+
+
+def test_french_cv_skill_lines_are_confirmed_and_experience_needs_confirmation() -> None:
+    candidate = parse_candidate_text(FRENCH_CV)
+    confirmed = {item.id for item in candidate.evidence if item.confirmed}
+    assert {"candidate-skill-english", "candidate-skill-french", "candidate-skill-vba", "candidate-skill-microsoft-office"} <= confirmed
+    assert "candidate-skill-management-control" not in confirmed
+    assert "Management control" in candidate.skills and "Accounting" in candidate.skills
+
+    vouched = parse_candidate_text(FRENCH_CV, confirmed_skills=["Management control"])
+    assert any(item.id == "candidate-skill-management-control" and item.confirmed for item in vouched.evidence)
+
+
+def test_finance_vocabulary_and_case_sensitive_tools() -> None:
+    job = parse_job_text(FINANCE_JOB)
+    skills = [requirement.skill for requirement in job.requirements]
+    assert {"Management control", "Corporate finance", "English", "Excel"} <= set(skills)
+    excel = next(requirement for requirement in job.requirements if requirement.skill == "Excel")
+    quote = next(item.quote for item in job.evidence if item.id == excel.evidence_id)
+    assert "Excellent at Excel" in quote and "excel in" not in quote
+
+
+def test_few_scoreable_requirements_never_make_a_strong_fit() -> None:
+    candidate = parse_candidate_text("Name: A\nSkills: English, French")
+    job = parse_job_text("Title: Consultant\nCompany: C\nRequired: fluent English and French, written and spoken.")
+    fit = assess_fit(job, calculate_match(candidate, job))
+    assert fit.verdict == "Potential Fit" and "could be scored" in fit.summary
+
+
+def test_errors_keep_the_posting_title() -> None:
+    from tau_job_application.orchestrator import ApplicationAgent
+    import tempfile
+    with tempfile.TemporaryDirectory() as folder:
+        agent = ApplicationAgent(ApplicationTracker(Path(folder) / "db.sqlite"), export_dir=Path(folder))
+        result = agent.run(CV, [JobInput(text="Title: Mystery role\nCompany: Acme\nNothing else.")]).results[0]
+    assert result.outcome == "error" and result.job_title == "Mystery role" and result.company == "Acme"

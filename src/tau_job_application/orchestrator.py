@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import unicodedata
 from typing import Literal
 
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ from tau_job_application.application_pack import Drafter, TemplateDrafter, build
 from tau_job_application.fit_check import CandidatePreferences, assess_fit
 from tau_job_application.matching import calculate_match
 from tau_job_application.models import CandidateProfile, JobPosting
-from tau_job_application.parsing import parse_candidate_text, parse_job_text
+from tau_job_application.parsing import _parse_fields, parse_candidate_text, parse_job_text
 from tau_job_application.tracker import ApplicationTracker
 
 Outcome = Literal["drafted", "skipped", "unchanged", "error"]
@@ -62,8 +63,9 @@ class ApplicationAgent:
         self.preferences = preferences or CandidatePreferences()
         self.drafter = drafter or TemplateDrafter()
 
-    def run(self, candidate_text: str, jobs: list[JobInput | JobPosting]) -> RunReport:
-        candidate = parse_candidate_text(candidate_text)
+    def run(self, candidate_text: str, jobs: list[JobInput | JobPosting], *, confirmed_skills: list[str] | None = None) -> RunReport:
+        """`confirmed_skills` are skills the user vouches for beyond the CV's own skills lines."""
+        candidate = parse_candidate_text(candidate_text, confirmed_skills=confirmed_skills)
         results = [self._process(candidate, job) for job in jobs]
         return RunReport(candidate_name=candidate.name, results=results)
 
@@ -72,8 +74,9 @@ class ApplicationAgent:
             job = job_input if isinstance(job_input, JobPosting) else parse_job_text(
                 job_input.text, title=job_input.title, company=job_input.company, url=job_input.url)
         except ValueError as exc:
-            title = getattr(job_input, "title", None) or "Unknown role"
-            company = getattr(job_input, "company", None) or "Unknown company"
+            fields = _parse_fields(getattr(job_input, "text", ""))
+            title = getattr(job_input, "title", None) or fields.get("title") or "Unknown role"
+            company = getattr(job_input, "company", None) or fields.get("company") or "Unknown company"
             return JobRunResult(job_title=title, company=company, outcome="error", reason=str(exc))
 
         existing = self.tracker.find(job.company, job.title, job.url)
@@ -105,7 +108,8 @@ class ApplicationAgent:
 
     def _export(self, application_id: int, job: JobPosting, markdown: str) -> Path:
         self.export_dir.mkdir(parents=True, exist_ok=True)
-        slug = re.sub(r"[^a-z0-9]+", "-", f"{job.company} {job.title}".casefold()).strip("-")[:80]
+        ascii_name = unicodedata.normalize("NFKD", f"{job.company} {job.title}").encode("ascii", "ignore").decode()
+        slug = re.sub(r"[^a-z0-9]+", "-", ascii_name.casefold()).strip("-")[:80]
         path = self.export_dir / f"{application_id:04d}-{slug}.md"
         path.write_text(markdown, encoding="utf-8")
         return path

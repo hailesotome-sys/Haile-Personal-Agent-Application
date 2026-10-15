@@ -28,7 +28,29 @@ CAPABILITIES = {
     "user research": "User research", "embedded systems": "Embedded systems",
     "continuous integration": "CI/CD", "version control": "Version control",
     "Amazon Web Services": "AWS", "Google Cloud Platform": "GCP",
+    # Finance and business vocabulary, including the French terms used in CVs and postings.
+    "contrôle de gestion": "Management control", "contrôleur de gestion": "Management control",
+    "controle de gestion": "Management control", "management controller": "Management control",
+    "management control": "Management control", "controlling": "Management control",
+    "financial planning and analysis": "FP&A", "corporate finance": "Corporate finance",
+    "finance d'entreprise": "Corporate finance", "finances d'entreprise": "Corporate finance",
+    "financial analysis": "Financial analysis", "analyse financière": "Financial analysis",
+    "financial analyst": "Financial analysis", "analyste financier": "Financial analysis",
+    "budget reporting": "Financial reporting", "financial reporting": "Financial reporting",
+    "reporting financier": "Financial reporting", "reportings financiers": "Financial reporting",
+    "budgetary": "Budgeting", "budget process": "Budgeting", "suivi budgétaire": "Budgeting",
+    "forecasts": "Forecasting", "forecast": "Forecasting",
+    "mergers and acquisitions": "M&A", "fusions-acquisitions": "M&A", "post-merger integration": "M&A",
+    "due diligences": "Due diligence", "risk management": "Risk management",
+    "asset management": "Asset management", "portfolio management": "Asset management",
+    "data analysis": "Data Analysis", "analyse de données": "Data Analysis",
+    "Microsoft Office": "Microsoft Office", "Pack Office": "Microsoft Office", "MS Office": "Microsoft Office",
+    "Power BI": "Power BI", "Power Query": "Power Query",
+    "clôture comptable": "Accounting", "comptabilité": "Accounting", "accounting close": "Accounting",
+    "anglais": "English", "français": "French", "espagnol": "Spanish",
 }
+# Avoid ordinary words ("go", "excel at", "sap") being read as tools or languages.
+CASE_SENSITIVE = {"Go", "C", "R", "Excel", "SAP", "VBA", "ACCA", "CIMA"}
 PREFERRED = re.compile(r"\b(preferred|desirable|nice[- ]to[- ]have|bonus|ideally|an? advantage|a plus|would be helpful)\b", re.I)
 CUE = re.compile(
     r"\b(?:experienced?\s+(?:with|in)|experience\s+(?:working\s+)?(?:with|in|using)|"
@@ -54,7 +76,7 @@ HEADINGS = {
 
 def _hits(phrase: str, text: str):
     # Avoid ordinary "go" and single-letter prose being interpreted as languages.
-    flags = 0 if phrase in {"Go", "C", "R"} else re.I
+    flags = 0 if phrase in CASE_SENSITIVE else re.I
     return list(re.finditer(rf"(?<![\w+#]){re.escape(phrase)}(?![\w+#])", text, flags))
 
 
