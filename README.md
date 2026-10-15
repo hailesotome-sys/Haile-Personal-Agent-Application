@@ -226,6 +226,28 @@ Each Job Workspace has an independent **Coach** window. History is saved locally
 
 Complete a current assessment in the active Job Workspace first, select a question, and type an answer. Interview inputs/transcripts are keyed by workspace and question to avoid mixing them. **Score and save this rehearsal** records the question, answer, structural feedback, and score only inside that selected workspace; the lab shows a compact history and average practice-evidence score. Recording is optional. Selecting transcription sends the recording to OpenAI. Feedback currently checks expressions associated with context, action, validation, and reflection. It does not assess whether an engineering explanation is correct.
 
+### Application agent (review-only)
+
+The application agent chains the `Agent_skills` steps for a batch of jobs: fit check → evidence inventory → tailored CV → cover letter → claim check → your review. It stops at a drafted pack. It cannot approve its own work, submit an application, or contact anyone; only you can record those steps in the tracker.
+
+```bash
+# Fit-check every job and draft packs for the ones worth applying to.
+uv run --no-sync tau-job-application prepare my_cv.pdf jobs/*.txt --location Zurich --exclude "Some Co" --min-verdict "Potential Fit"
+# Draft with a model following Agent_skills/*/SKILL.md (needs OPENAI_API_KEY and MODEL_NAME).
+uv run --no-sync tau-job-application prepare my_cv.pdf jobs/*.txt --llm
+
+uv run --no-sync tau-job-application tracker              # all roles and their status
+uv run --no-sync tau-job-application show 3               # pack + history
+uv run --no-sync tau-job-application approve 3            # after editing .job_assistant/packs/0003-*.md
+uv run --no-sync tau-job-application applied 3 --note "Submitted on the careers page"
+uv run --no-sync tau-job-application outcome 3 interviewing
+uv run --no-sync tau-job-application follow-ups           # applied 7+ days ago with no outcome
+```
+
+- **Fit check** (`fit_check.py`): Strong Fit / Potential Fit / Stretch / Not a Fit from confirmed required-skill coverage, plus hard filters for location and excluded companies. Unknown never counts as a pass.
+- **Application pack** (`application_pack.py`): the cover-letter skill's evidence inventory, CV and cover-letter drafts (offline template, or a model given the SKILL.md files), and a claim check that blocks numbers not in the CV/posting and flags skills the CV does not mention.
+- **Tracker** (`tracker.py`): `assessed → drafted → approved → applied → interviewing/offer/rejected/withdrawn/no_response`. Approval reads your edited pack file and refuses while any `[GAP ...]` placeholder remains or the claim check blocked it. Re-running `prepare` never touches roles you approved or skipped.
+
 ## 4. Scores, evidence, and known limitations
 
 ### Current scoring rules
