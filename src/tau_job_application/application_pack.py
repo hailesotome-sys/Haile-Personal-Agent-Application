@@ -15,9 +15,13 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from tau_job_application.apply_score import ApplyScore, compute_apply_score
 from tau_job_application.fit_check import FitAssessment
 from tau_job_application.models import CandidateProfile, JobPosting, MatchResult, RequirementStatus
 from tau_job_application.parsing import _find_skills, _slug
+from tau_job_application.resume_document import (
+    ResumeChange, ResumeDocument, parse_resume, render_resume_markdown, tailor_resume_document,
+)
 
 DocumentKind = Literal["resume", "cover_letter"]
 SKILL_DIRECTORIES = {"resume": "resume_tailor", "cover_letter": "cover_letter_writer", "fit_check": "fit_check"}
@@ -29,6 +33,7 @@ class InventoryRow(BaseModel):
     importance: str
     candidate_evidence: str
     strength: Literal["Strong", "Partial", "MISSING", "Uncertain"]
+    job_quote: str = ""
 
 
 class ClaimIssue(BaseModel):
@@ -51,6 +56,33 @@ class ApplicationPack(BaseModel):
     cover_letter_draft: str
     claim_check: ClaimCheck
     drafted_by: str
+    fit: FitAssessment | None = None
+    match_score: int | None = None
+    resume_document: ResumeDocument | None = None
+    resume_changes: list[ResumeChange] = Field(default_factory=list)
+    apply_score: ApplyScore | None = None
+
+
+class JobAnalysis(BaseModel):
+    """What the review screen shows next to the pack: why to apply, and what the agent changed."""
+    fit: FitAssessment
+    apply_score: ApplyScore
+    inventory: list[InventoryRow] = Field(default_factory=list)
+    resume_changes: list[ResumeChange] = Field(default_factory=list)
+    resume_document: ResumeDocument | None = None
+    claim_check: ClaimCheck | None = None
+
+
+def analysis_for_pack(pack: ApplicationPack) -> JobAnalysis:
+    return JobAnalysis(fit=pack.fit, apply_score=pack.apply_score, inventory=pack.evidence_inventory,
+                       resume_changes=pack.resume_changes, resume_document=pack.resume_document, claim_check=pack.claim_check)
+
+
+def analysis_without_pack(candidate: CandidateProfile, job: JobPosting, match: MatchResult, fit: FitAssessment) -> JobAnalysis:
+    """For roles the agent skipped: the same score and fit check, no drafts."""
+    inventory = build_evidence_inventory(candidate, job, match)
+    return JobAnalysis(fit=fit, inventory=inventory,
+                       apply_score=compute_apply_score(fit, match, [row.strength for row in inventory], None))
 
 
 class DraftContext(BaseModel):
@@ -71,21 +103,24 @@ def build_evidence_inventory(candidate: CandidateProfile, job: JobPosting, match
     """The cover-letter skill's mandatory pre-draft table, built from the match."""
     importance = {requirement.skill: requirement.importance for requirement in job.requirements}
     evidence = {item.id: item for item in candidate.evidence}
+    job_quotes = {item.id: item.quote for item in job.evidence}
     rows = []
     for item in match.requirements:
         if item.status == RequirementStatus.MATCHED:
             quotes = [evidence[eid].quote for eid in item.candidate_evidence_ids if eid in evidence]
             rows.append(InventoryRow(employer_need=item.skill, importance=importance.get(item.skill, "required"),
-                                     candidate_evidence=quotes[0] if quotes else "Confirmed skill", strength="Strong"))
+                                     candidate_evidence=quotes[0] if quotes else "Confirmed skill", strength="Strong",
+                                     job_quote=job_quotes.get(item.job_evidence_id, "")))
         elif item.status == RequirementStatus.UNKNOWN:
             rows.append(InventoryRow(employer_need=item.skill, importance="uncertain",
-                                     candidate_evidence="Requirement is ambiguous in the posting", strength="Uncertain"))
+                                     candidate_evidence="Requirement is ambiguous in the posting", strength="Uncertain",
+                                     job_quote=job_quotes.get(item.job_evidence_id, "")))
         else:
             mentioned = bool(candidate.raw_cv and re.search(rf"(?<!\w){re.escape(item.skill)}(?!\w)", candidate.raw_cv, re.I))
             rows.append(InventoryRow(
                 employer_need=item.skill, importance=importance.get(item.skill, "required"),
                 candidate_evidence="Mentioned in the CV but not confirmed; confirm before claiming" if mentioned else "Not found in CV",
-                strength="Partial" if mentioned else "MISSING",
+                strength="Partial" if mentioned else "MISSING", job_quote=job_quotes.get(item.job_evidence_id, ""),
             ))
     return rows
 
@@ -218,20 +253,45 @@ def build_application_pack(candidate: CandidateProfile, job: JobPosting, match: 
     drafter = drafter or TemplateDrafter()
     inventory = build_evidence_inventory(candidate, job, match)
     context = DraftContext(candidate=candidate, job=job, match=match, fit=fit, inventory=inventory)
-    resume = drafter.draft("resume", context)
+    document, changes = _tailored_document(candidate, job)
+    resume = render_resume_markdown(document) if document and isinstance(drafter, TemplateDrafter) else drafter.draft("resume", context)
     letter = drafter.draft("cover_letter", context)
+    claims = check_claims({"resume": resume, "cover_letter": letter}, candidate, job)
     return ApplicationPack(
         job_title=job.title, company=job.company, evidence_inventory=inventory,
-        resume_draft=resume, cover_letter_draft=letter,
-        claim_check=check_claims({"resume": resume, "cover_letter": letter}, candidate, job),
-        drafted_by=drafter.name,
+        resume_draft=resume, cover_letter_draft=letter, claim_check=claims, drafted_by=drafter.name,
+        fit=fit, match_score=match.score, resume_document=document, resume_changes=changes,
+        apply_score=compute_apply_score(fit, match, [row.strength for row in inventory], claims.status),
     )
 
 
+def _tailored_document(candidate: CandidateProfile, job: JobPosting) -> tuple[ResumeDocument | None, list[ResumeChange]]:
+    """The CV parsed into sections and reordered for this job; None when the CV has no usable structure."""
+    try:
+        document = parse_resume(candidate.raw_cv or "")
+    except ValueError:
+        return None, []
+    if not any(section.entries for section in document.sections):
+        return None, []
+    skills = [requirement.skill for requirement in job.requirements if requirement.importance != "uncertain"]
+    return tailor_resume_document(document, job.title, job.company, skills)
+
+
 def render_pack_markdown(pack: ApplicationPack, fit: FitAssessment) -> str:
-    lines = [f"# Application pack: {pack.job_title} at {pack.company}", "",
-             f"**Fit verdict:** {fit.verdict}. {fit.summary}", f"**Recommendation:** {fit.recommendation}", "",
-             f"**Claim check:** {pack.claim_check.status}"]
+    lines = [f"# Application pack: {pack.job_title} at {pack.company}", ""]
+    if pack.apply_score:
+        lines.append(f"**Apply score:** {pack.apply_score.score}/100 ({pack.apply_score.label})")
+        lines += [f"- {c.name} ({c.weight}%): {c.score}/100. {c.explanation}" if c.counted else f"- {c.name}: {c.explanation}"
+                  for c in pack.apply_score.components]
+        if pack.apply_score.capped_reason:
+            lines.append(f"- {pack.apply_score.capped_reason}")
+        lines.append("")
+    lines += [f"**Fit verdict:** {fit.verdict}. {fit.summary}", f"**Recommendation:** {fit.recommendation}", ""]
+    lines += [f"- Hard filter, {item.name}: {item.result}. {item.detail}" for item in fit.hard_filters]
+    if pack.resume_changes:
+        lines += ["", "**What changed in your CV**"]
+        lines += [f"- {change.kind} ({change.where}): {change.detail}" for change in pack.resume_changes]
+    lines += ["", f"**Claim check:** {pack.claim_check.status}"]
     lines += [f"- {issue.document}: {issue.kind} `{issue.text}`: {issue.detail}" for issue in pack.claim_check.issues]
     lines += ["", "## Evidence inventory", "| Employer need | Importance | Candidate evidence | Strength |", "|---|---|---|---|"]
     lines += [f"| {row.employer_need} | {row.importance} | {row.candidate_evidence} | {row.strength} |" for row in pack.evidence_inventory]

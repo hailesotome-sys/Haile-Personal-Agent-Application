@@ -248,6 +248,8 @@ uv run --no-sync tau-job-application follow-ups           # applied 7+ days ago 
 
 - **Fit check** (`fit_check.py`): Strong Fit / Potential Fit / Stretch / Not a Fit from confirmed required-skill coverage, plus hard filters for location and excluded companies. Unknown never counts as a pass.
 - **Application pack** (`application_pack.py`): the cover-letter skill's evidence inventory, CV and cover-letter drafts (offline template, or a model given the SKILL.md files), and a claim check that blocks numbers not in the CV/posting and flags skills the CV does not mention.
+- **Apply score** (`apply_score.py`): one 0-100 decision aid with its parts shown: requirement match 45%, hard filters 25%, evidence strength 20%, pack readiness 10%. A failed hard filter caps it at 25 (Skip); a posting with no scoreable skills is capped at 60 and the match parts are not counted. Labels: Apply (75+), Apply with care (55+), Probably skip.
+- **CV PDF** (`resume_document.py`): your CV parsed into sections, tailored only by adding a target line and moving the bullets that evidence the job's skills to the top, then laid out on one A4 page. Every change is listed with its reason. In the app, the **CV (PDF)** tab previews it (including your edits to the pack's CV section) and downloads it; `prepare` also writes `<id>-<role>-cv.pdf` next to each pack.
 - **Tracker** (`tracker.py`): `assessed → drafted → approved → applied → interviewing/offer/rejected/withdrawn/no_response`. Approval reads your edited pack file and refuses while any `[GAP ...]` placeholder remains or the claim check blocked it. Re-running `prepare` never touches roles you approved or skipped.
 
 ## 4. Scores, evidence, and known limitations

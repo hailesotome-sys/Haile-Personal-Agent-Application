@@ -14,11 +14,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from tau_job_application.application_pack import Drafter, TemplateDrafter, build_application_pack, render_pack_markdown
+from tau_job_application.application_pack import (Drafter, TemplateDrafter, analysis_for_pack, analysis_without_pack,
+                                                   build_application_pack, render_pack_markdown)
 from tau_job_application.fit_check import CandidatePreferences, assess_fit
 from tau_job_application.matching import calculate_match
 from tau_job_application.models import CandidateProfile, JobPosting
 from tau_job_application.parsing import _parse_fields, parse_candidate_text, parse_job_text
+from tau_job_application.resume_document import render_resume_pdf
 from tau_job_application.tracker import ApplicationTracker
 
 Outcome = Literal["drafted", "skipped", "unchanged", "error"]
@@ -39,8 +41,11 @@ class JobRunResult(BaseModel):
     application_id: int | None = None
     verdict: str | None = None
     match_score: int | None = None
+    apply_score: int | None = None
+    apply_label: str | None = None
     claim_status: str | None = None
     pack_path: str | None = None
+    pdf_path: str | None = None
     reason: str
 
 
@@ -94,17 +99,28 @@ class ApplicationAgent:
         tracked = self.tracker.record_assessment(company=job.company, job_title=job.title, job_url=job.url,
                                                  verdict=fit.verdict, match_score=match.score)
         if not fit.should_prepare_application:
+            analysis = analysis_without_pack(candidate, job, match, fit)
+            self.tracker.save_analysis(tracked.id, analysis_json=analysis.model_dump_json(), apply_score=analysis.apply_score.score)
             self.tracker.transition(tracked.id, "skipped", actor="agent", details={"verdict": fit.verdict, "reason": fit.recommendation})
             return JobRunResult(job_title=job.title, company=job.company, outcome="skipped", application_id=tracked.id,
-                                verdict=fit.verdict, match_score=match.score, reason=fit.recommendation)
+                                verdict=fit.verdict, match_score=match.score, apply_score=analysis.apply_score.score,
+                                apply_label=analysis.apply_score.label, reason=fit.recommendation)
 
         pack = build_application_pack(candidate, job, match, fit, self.drafter)
+        analysis = analysis_for_pack(pack)
         markdown = render_pack_markdown(pack, fit)
         path = self._export(tracked.id, job, markdown)
+        pdf_path = None
+        if pack.resume_document:
+            pdf_path = path.with_name(f"{path.stem}-cv.pdf")
+            pdf_path.write_bytes(render_resume_pdf(pack.resume_document))
+        self.tracker.save_analysis(tracked.id, analysis_json=analysis.model_dump_json(), apply_score=analysis.apply_score.score)
         self.tracker.save_pack(tracked.id, pack_markdown=markdown, claim_status=pack.claim_check.status, pack_path=path)
         return JobRunResult(job_title=job.title, company=job.company, outcome="drafted", application_id=tracked.id,
-                            verdict=fit.verdict, match_score=match.score, claim_status=pack.claim_check.status,
-                            pack_path=str(path), reason="Application pack ready for your review.")
+                            verdict=fit.verdict, match_score=match.score, apply_score=analysis.apply_score.score,
+                            apply_label=analysis.apply_score.label, claim_status=pack.claim_check.status,
+                            pack_path=str(path), pdf_path=str(pdf_path) if pdf_path else None,
+                            reason="Application pack ready for your review.")
 
     def _export(self, application_id: int, job: JobPosting, markdown: str) -> Path:
         self.export_dir.mkdir(parents=True, exist_ok=True)
@@ -119,10 +135,14 @@ def render_report(report: RunReport) -> str:
     lines = [f"# Application run for {report.candidate_name}", ""]
     counts = report.counts()
     lines.append(", ".join(f"{count} {outcome}" for outcome, count in counts.items()) or "No jobs processed.")
-    lines += ["", "| # | Role | Verdict | Match | Claims | Outcome | Note |", "|---|---|---|---|---|---|---|"]
+    lines += ["", "| # | Role | Apply score | Verdict | Match | Claims | Outcome | Note |", "|---|---|---|---|---|---|---|---|"]
     for result in report.results:
-        lines.append(f"| {result.application_id or '-'} | {result.job_title} at {result.company} | {result.verdict or '-'} | "
+        lines.append(f"| {result.application_id or '-'} | {result.job_title} at {result.company} | {_apply(result)} | {result.verdict or '-'} | "
                      f"{result.match_score if result.match_score is not None else '-'} | {result.claim_status or '-'} | "
                      f"{result.outcome} | {result.reason} |")
     lines += ["", "Nothing was submitted. Review each pack, then run `approve <id>` and apply yourself."]
     return "\n".join(lines)
+
+
+def _apply(result: JobRunResult) -> str:
+    return f"{result.apply_score} ({result.apply_label})" if result.apply_score is not None else "-"

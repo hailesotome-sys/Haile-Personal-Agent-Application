@@ -50,6 +50,8 @@ class TrackedApplication(BaseModel):
     claim_status: str | None
     pack_markdown: str | None
     pack_path: str | None = None
+    apply_score: int | None = None
+    analysis_json: str | None = None
     follow_up_at: str | None
     notes: str
     created_at: str
@@ -78,6 +80,8 @@ class ApplicationTracker:
                     claim_status TEXT,
                     pack_markdown TEXT,
                     pack_path TEXT,
+                    apply_score INTEGER,
+                    analysis_json TEXT,
                     follow_up_at TEXT,
                     notes TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
@@ -93,6 +97,10 @@ class ApplicationTracker:
                     details_json TEXT NOT NULL
                 );
             """)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(applications)")}
+            for column, kind in (("pack_path", "TEXT"), ("apply_score", "INTEGER"), ("analysis_json", "TEXT")):
+                if column not in columns:  # databases created before these columns existed
+                    connection.execute(f"ALTER TABLE applications ADD COLUMN {column} {kind}")
 
     @staticmethod
     def fingerprint(company: str, job_title: str, job_url: str | None) -> str:
@@ -123,6 +131,12 @@ class ApplicationTracker:
                 connection.execute("UPDATE applications SET verdict = ?, match_score = ?, updated_at = ? WHERE id = ?",
                                    (verdict, match_score, now, existing.id))
         return self.get(existing.id)
+
+    def save_analysis(self, application_id: int, *, analysis_json: str, apply_score: int) -> TrackedApplication:
+        with self._connect() as connection:
+            connection.execute("UPDATE applications SET analysis_json = ?, apply_score = ? WHERE id = ?",
+                               (analysis_json, apply_score, application_id))
+        return self.get(application_id)
 
     def save_pack(self, application_id: int, *, pack_markdown: str, claim_status: str, pack_path: Path | None = None) -> TrackedApplication:
         current = self.get(application_id)

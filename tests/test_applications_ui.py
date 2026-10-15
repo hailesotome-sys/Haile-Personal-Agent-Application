@@ -73,3 +73,21 @@ def test_editing_an_approved_pack_requires_reapproval(tmp_path) -> None:
     tracker.transition(result.application_id, "approved", actor="user")
     assert tracker.save_reviewed_text(result.application_id, text).status == "approved"
     assert tracker.save_reviewed_text(result.application_id, text + "\nExtra").status == "drafted"
+
+
+def test_review_shows_score_fit_check_changes_and_pdf(tmp_path, monkeypatch) -> None:
+    from test_resume_pdf import CV as STRUCTURED_CV, JOB
+
+    app, ui = _app(tmp_path, monkeypatch)
+    next(x for x in app.text_area if x.label == "Your CV").set_value(STRUCTURED_CV)
+    next(x for x in app.text_area if x.label == "Job descriptions").set_value(JOB)
+    _button(app, "Run the agent").click()
+    app.run()
+    assert not app.exception
+    assert any(markdown.value.startswith("### Apply score") for markdown in app.markdown)
+    assert {"CV (PDF)", "Fit check", "What changed", "Review and approve"} <= {tab.label for tab in app.tabs}
+    downloads = [element for element in app.get("download_button")]
+    assert any("Download CV (PDF)" in element.proto.label for element in downloads)
+    assert app.get("image")
+    assert any("Moved up" in markdown.value for markdown in app.markdown)
+    assert any("Hard filters" in markdown.value for markdown in app.markdown)
