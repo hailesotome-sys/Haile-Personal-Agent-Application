@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import tempfile
 
 import streamlit as st
 
@@ -15,6 +16,7 @@ from tau_job_application.application_pack import LLMDrafter, TemplateDrafter
 from tau_job_application.fit_check import CandidatePreferences
 from tau_job_application.job_pages import fetch_job_url
 from tau_job_application.orchestrator import ApplicationAgent, JobInput
+from tau_job_application.parsing import load_document
 from tau_job_application.tracker import ApplicationTracker, TransitionError
 
 JOB_SEPARATOR = "---"
@@ -55,8 +57,14 @@ def show_applications(tracker: ApplicationTracker, export_dir: Path, skills_dir:
 
 def _prepare_section(tracker: ApplicationTracker, export_dir: Path, skills_dir: Path, default_cv: str) -> None:
     with st.expander("Prepare new applications", expanded=not tracker.list()):
-        cv_text = st.text_area("Your CV", value=default_cv, height=180, key="apps_cv",
-                               help="Defaults to the CV saved in your shared profile.")
+        uploaded = st.file_uploader("Upload your CV (PDF, DOCX, TXT)", type=["pdf", "docx", "txt", "md"], key="apps_cv_file")
+        if uploaded is not None:
+            try:
+                default_cv = _uploaded_text(uploaded)
+            except ValueError as exc:
+                st.error(str(exc))
+        cv_text = st.text_area("Your CV", value=default_cv, height=180, key=f"apps_cv_{uploaded.file_id if uploaded else 'typed'}",
+                               help="Defaults to the uploaded file, or to the CV saved in your shared profile.")
         vouched = st.text_input("Skills you can back up that your CV doesn't list in a skills line (comma separated)",
                                 key="apps_confirmed",
                                 help="For example Management control, Financial reporting. Only these and your CV's own skills lines earn match credit.")
@@ -147,6 +155,8 @@ def _application_detail(tracker: ApplicationTracker, application_id: int) -> Non
     if row.status in {"drafted", "approved"}:
         edited = st.text_area("Application pack (edit it, fill every [GAP …], then approve)", value=current, height=480,
                               key=f"apps_pack_{row.id}_{_draft_version(tracker, row.id)}")
+        st.download_button("Download pack (.md)", edited, file_name=Path(row.pack_path or f"application-{row.id}.md").name,
+                           mime="text/markdown", key=f"apps_download_{row.id}")
         if row.claim_status == "blocked":
             st.error("The claim check blocked this pack: it states numbers your CV does not contain. Remove them before approving.")
         save, approve, skip = st.columns(3)
@@ -205,6 +215,16 @@ def _pack_text(row) -> str:
     if row.pack_path and Path(row.pack_path).exists():
         return Path(row.pack_path).read_text(encoding="utf-8")
     return row.pack_markdown or ""
+
+
+def _uploaded_text(uploaded) -> str:
+    with tempfile.NamedTemporaryFile(suffix=Path(uploaded.name).suffix, delete=False) as temporary:
+        temporary.write(uploaded.getvalue())
+        path = Path(temporary.name)
+    try:
+        return load_document(path)
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def _csv(value: str) -> list[str]:

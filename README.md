@@ -228,6 +228,8 @@ Complete a current assessment in the active Job Workspace first, select a questi
 
 ### Application agent (review-only)
 
+**On an iPad or any browser:** open the repository on github.com, switch to your branch, then choose **Code → Codespaces → Create codespace**. The first start installs everything (a few minutes) and opens the app in a new tab; later starts open it straight away. Use the **Applications** tab, upload your CV, paste jobs, and download each pack when you have approved it.
+
 Use the **Applications** tab in the UI (it works in a phone or tablet browser), or the CLI below. The application agent chains the `Agent_skills` steps for a batch of jobs: fit check → evidence inventory → tailored CV → cover letter → claim check → your review. It stops at a drafted pack. It cannot approve its own work, submit an application, or contact anyone; only you can record those steps in the tracker.
 
 ```bash
