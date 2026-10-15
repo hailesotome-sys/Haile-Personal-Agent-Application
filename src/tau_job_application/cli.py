@@ -38,6 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--location", action="append", default=[], help="Target location; repeat for several")
     prepare.add_argument("--no-remote", action="store_true", help="Do not accept remote roles outside target locations")
     prepare.add_argument("--exclude", action="append", default=[], help="Company to skip; repeat for several")
+    prepare.add_argument("--available-from", default=None, help="First month you can start, e.g. 2027-06")
     prepare.add_argument("--min-verdict", choices=["Strong Fit", "Potential Fit", "Stretch"], default="Stretch")
     prepare.add_argument("--llm", action="store_true", help="Draft with a model using Agent_skills (needs OPENAI_API_KEY and MODEL_NAME)")
     prepare.add_argument("--out", type=Path, default=None, help="Folder for application packs")
@@ -109,7 +110,8 @@ def _prepare(args: argparse.Namespace, tracker) -> str:
     from tau_job_application.orchestrator import ApplicationAgent, JobInput, render_report
 
     preferences = CandidatePreferences(target_locations=args.location, remote_ok=not args.no_remote,
-                                       excluded_companies=args.exclude, minimum_verdict=args.min_verdict)
+                                       excluded_companies=args.exclude, minimum_verdict=args.min_verdict,
+                                       available_from=_month(args.available_from))
     drafter = TemplateDrafter()
     if args.llm:
         from tau_job_application.agent import build_completion
@@ -128,3 +130,12 @@ async def _run_agent(candidate_path: Path, job_path: Path) -> None:
 
     async for event in build_agent().prompt(prompt):
         print(event)
+
+
+def _month(value: str | None):
+    from datetime import date
+
+    if not value:
+        return None
+    year, month = value.split("-")[:2]
+    return date(int(year), int(month), 1)

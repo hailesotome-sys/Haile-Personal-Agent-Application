@@ -67,6 +67,8 @@ def _prepare_section(tracker: ApplicationTracker, export_dir: Path, skills_dir: 
         locations = left.text_input("Target locations (comma separated)", key="apps_locations")
         excluded = middle.text_input("Companies to skip (comma separated)", key="apps_excluded")
         minimum = right.selectbox("Prepare packs from", ["Stretch", "Potential Fit", "Strong Fit"], key="apps_min")
+        available = left.date_input("Available from", value=None, key="apps_available",
+                                    help="Roles that start earlier are skipped.")
         remote_ok = st.checkbox("Accept remote roles outside my locations", value=True, key="apps_remote")
         can_use_model = model_configured()
         use_model = st.checkbox("Draft with a model (follows Agent_skills)", value=can_use_model,
@@ -91,7 +93,8 @@ def _prepare_section(tracker: ApplicationTracker, export_dir: Path, skills_dir: 
             st.error("Add at least one job description or URL.")
             return
         preferences = CandidatePreferences(
-            target_locations=_csv(locations), remote_ok=remote_ok, excluded_companies=_csv(excluded), minimum_verdict=minimum)
+            target_locations=_csv(locations), remote_ok=remote_ok, excluded_companies=_csv(excluded), minimum_verdict=minimum,
+            available_from=available)
         drafter = TemplateDrafter()
         if use_model:
             from tau_job_application.agent import build_completion

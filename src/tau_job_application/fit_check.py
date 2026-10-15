@@ -7,6 +7,8 @@ check is reported as unknown rather than silently passed.
 
 from __future__ import annotations
 
+from datetime import date
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -25,6 +27,7 @@ class CandidatePreferences(BaseModel):
     remote_ok: bool = True
     excluded_companies: list[str] = Field(default_factory=list)
     minimum_verdict: Verdict = "Stretch"
+    available_from: date | None = None
 
 
 class HardFilter(BaseModel):
@@ -80,7 +83,8 @@ def assess_fit(job: JobPosting, match: MatchResult, preferences: CandidatePrefer
         strongest_alignments=[f"{skill}: confirmed in the CV and requested by the role" for skill in matched],
         critical_gaps=gaps,
         uncertain=uncertain,
-        recommendation=_recommendation(verdict, meets_minimum, matched, missing_required),
+        recommendation=("Skip: " + " ".join(item.detail for item in failed)) if failed
+        else _recommendation(verdict, meets_minimum, matched, missing_required),
         should_prepare_application=verdict != "Not a Fit" and meets_minimum,
     )
 
@@ -104,7 +108,40 @@ def _hard_filters(job: JobPosting, preferences: CandidatePreferences) -> list[Ha
             filters.append(HardFilter(name="Location", result="pass", detail=f"{job.location} allows remote work."))
         else:
             filters.append(HardFilter(name="Location", result="fail", detail=f"{job.location} is outside your target locations."))
+    if preferences.available_from:
+        start = job_start_date(job.description or "")
+        wanted = preferences.available_from
+        if start is None:
+            filters.append(HardFilter(name="Start date", result="unknown", detail="No start date found in the posting; check it."))
+        elif (start.year, start.month) < (wanted.year, wanted.month):
+            filters.append(HardFilter(name="Start date", result="fail",
+                                      detail=f"Starts {start:%B %Y}, before you are available ({wanted:%B %Y})."))
+        else:
+            filters.append(HardFilter(name="Start date", result="pass", detail=f"Starts {start:%B %Y}."))
     return filters
+
+
+MONTHS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+    "janvier": 1, "février": 2, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7,
+    "août": 8, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12, "decembre": 12,
+}
+START_CUE = re.compile(r"\b(?:start(?:s|ing)?(?: date)?|begin(?:s|ning)?|join(?:s)?\b[^.\n]{0,40}?\bin|"
+                       r"à pourvoir|a pourvoir|dès|début|démarrage|available from)\b", re.I)
+IMMEDIATE = re.compile(r"as soon as possible|\basap\b|immediately|dès à présent|dès que possible|immédiat", re.I)
+MONTH_YEAR = re.compile(r"(?:(\d{1,2})\s+)?(" + "|".join(MONTHS) + r")\s+(20\d{2})", re.I)
+
+
+def job_start_date(text: str, today: date | None = None) -> date | None:
+    """The posting's start date when it states one near a start cue; None when unclear."""
+    for cue in START_CUE.finditer(text):
+        window = text[cue.start():cue.start() + 120]
+        if IMMEDIATE.search(window[:60]):
+            return today or date.today()
+        if match := MONTH_YEAR.search(window):
+            return date(int(match[3]), MONTHS[match[2].casefold()], int(match[1] or 1))
+    return None
 
 
 def _summary(job: JobPosting, verdict: Verdict, match: MatchResult, failed: list[HardFilter], missing_required: list[str]) -> str:

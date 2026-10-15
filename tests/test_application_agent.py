@@ -200,3 +200,28 @@ def test_errors_keep_the_posting_title() -> None:
         agent = ApplicationAgent(ApplicationTracker(Path(folder) / "db.sqlite"), export_dir=Path(folder))
         result = agent.run(CV, [JobInput(text="Title: Mystery role\nCompany: Acme\nNothing else.")]).results[0]
     assert result.outcome == "error" and result.job_title == "Mystery role" and result.company == "Acme"
+
+
+def test_start_dates_are_read_in_english_and_french() -> None:
+    from datetime import date
+    from tau_job_application.fit_check import job_start_date
+
+    today = date(2026, 10, 15)
+    assert job_start_date("Start date: September 2027. Permanent.", today) == date(2027, 9, 1)
+    assert job_start_date("Stage à pourvoir dès janvier 2027", today) == date(2027, 1, 1)
+    assert job_start_date("Start: 2 November 2026.", today) == date(2026, 11, 2)
+    assert job_start_date("Poste à pourvoir dès à présent", today) == today
+    assert job_start_date("Founded in March 2001, we build things.", today) is None
+    assert job_start_date("Analyse des données de janvier 2025 à mars 2026.", today) is None
+
+
+def test_roles_starting_before_availability_are_skipped(tmp_path: Path) -> None:
+    from datetime import date
+
+    early = GOOD_JOB + "Start: January 2027.\n"
+    later = GOOD_JOB.replace("Example Systems", "Later Co") + "Start date: September 2027.\n"
+    agent = ApplicationAgent(ApplicationTracker(tmp_path / "db.sqlite"), export_dir=tmp_path / "packs",
+                             preferences=CandidatePreferences(available_from=date(2027, 6, 1)))
+    results = agent.run(CV, [JobInput(text=early), JobInput(text=later)]).results
+    assert [result.outcome for result in results] == ["skipped", "drafted"]
+    assert "before you are available" in results[0].reason
